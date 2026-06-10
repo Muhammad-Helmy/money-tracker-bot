@@ -11,10 +11,5 @@
       "src": "/api/bot",
       "dest": "/api/bot.js"
     }
-  ],
-  "functions": {
-    "api/bot.js": {
-      "maxDuration": 10
-    }
-  }
+  ]
 }
