@@ -801,24 +801,23 @@ async function tampilkanRiwayat(chatId, limit = 10) {
         // Skip header (row pertama)
         const dataRows = rows.slice(1);
         
-        // Ambil data terbaru (dari belakang)
-        const recentData = dataRows.slice(-limit).reverse();
+        // Ambil N transaksi terbaru, tapi TIDAK di-reverse
+        // Jadi urutan tetap: lama -> baru
+        const recentData = dataRows.slice(-limit);
         
         if (recentData.length === 0) {
             await sendMessage(chatId, '📜 Belum ada riwayat transaksi.');
             return;
         }
 
-        let reportText = `📜 *${limit} Transaksi Terakhir:*\n\n`;
+        let reportText = `📜 *${recentData.length} Transaksi Terakhir:*\n\n`;
         
         recentData.forEach((row, idx) => {
-            // A[0]=ID, B[1]=Date, C[2]=Type, D[3]=Source, E[4]=Dest, F[5]=Payment, G[6]=Category, H[7]=Amount
             const date = row[1] || '-';
             const type = row[2] || 'EXPENSE';
             const category = row[6] || '-';
             const amountRaw = row[7] || '0';
             
-            // Parse amount (bisa jadi "Rp 10.000" atau "10000")
             let amount = 0;
             if (typeof amountRaw === 'string') {
                 const cleanAmount = amountRaw.replace(/Rp\s?/gi, '').replace(/\./g, '').replace(/,/g, '.');
@@ -827,12 +826,14 @@ async function tampilkanRiwayat(chatId, limit = 10) {
                 amount = parseFloat(amountRaw) || 0;
             }
             
-            // Icon berdasarkan type
-            let icon = '📤'; // Default expense
+            let icon = '📤';
             if (type === 'INCOME') icon = '📥';
             else if (type.includes('TRANSFER')) icon = '💸';
             
-            reportText += `${idx + 1}. ${icon} *${category}* - Rp ${formatRupiah(amount)}\n`;
+            // Nomor urut dimulai dari 1
+            const nomor = idx + 1;
+            
+            reportText += `${nomor}. ${icon} *${category}* - Rp ${formatRupiah(amount)}\n`;
             reportText += `    ${date}\n\n`;
         });
 
