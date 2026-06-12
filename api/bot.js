@@ -152,7 +152,7 @@ async function handleMessage(msg) {
         await generateReport(chatId);
         return;
     }
-        else if (text === '📜 Riwayat' || text.toLowerCase() === '/riwayat') {
+        else if (text === '📜 Riwayat' || text.toLowerCase() === 'riwayat' || text.toLowerCase() === '/riwayat') {
         await tampilkanRiwayat(chatId, 5);
         return;
     }
@@ -787,7 +787,7 @@ async function getTotalExpenseBulanIni() {
     }
 }
 
-async function tampilkanRiwayat(chatId, limit = 5) {
+async function tampilkanRiwayat(chatId, limit = 10) {
     try {
         const authClient = await auth.getClient();
         const response = await sheets.spreadsheets.values.get({
@@ -797,11 +797,12 @@ async function tampilkanRiwayat(chatId, limit = 5) {
         });
         
         const rows = response.data.values || [];
-        // Hapus header
-        rows.shift(); 
         
-        // Ambil data dari belakang (terbaru)
-        const recentData = rows.slice(-limit).reverse();
+        // Skip header (row pertama)
+        const dataRows = rows.slice(1);
+        
+        // Ambil data terbaru (dari belakang)
+        const recentData = dataRows.slice(-limit).reverse();
         
         if (recentData.length === 0) {
             await sendMessage(chatId, '📜 Belum ada riwayat transaksi.');
@@ -811,20 +812,32 @@ async function tampilkanRiwayat(chatId, limit = 5) {
         let reportText = `📜 *${limit} Transaksi Terakhir:*\n\n`;
         
         recentData.forEach((row, idx) => {
-            // row[0]=ID, row[1]=Date, row[2]=Type, row[6]=Category, row[7]=Amount
+            // A[0]=ID, B[1]=Date, C[2]=Type, D[3]=Source, E[4]=Dest, F[5]=Payment, G[6]=Category, H[7]=Amount
             const date = row[1] || '-';
-            const type = row[2] || '-';
+            const type = row[2] || 'EXPENSE';
             const category = row[6] || '-';
-            const amount = row[7] || '0';
+            const amountRaw = row[7] || '0';
             
-            let icon = type === 'INCOME' ? '📥' : (type.includes('TRANSFER') ? '💸' : '📤');
+            // Parse amount (bisa jadi "Rp 10.000" atau "10000")
+            let amount = 0;
+            if (typeof amountRaw === 'string') {
+                const cleanAmount = amountRaw.replace(/Rp\s?/gi, '').replace(/\./g, '').replace(/,/g, '.');
+                amount = parseFloat(cleanAmount) || 0;
+            } else {
+                amount = parseFloat(amountRaw) || 0;
+            }
             
-            reportText += `${idx + 1}. ${icon} *${category}* - Rp ${formatRupiah(parseFloat(amount) || 0)}\n`;
+            // Icon berdasarkan type
+            let icon = '📤'; // Default expense
+            if (type === 'INCOME') icon = '📥';
+            else if (type.includes('TRANSFER')) icon = '💸';
+            
+            reportText += `${idx + 1}. ${icon} *${category}* - Rp ${formatRupiah(amount)}\n`;
             reportText += `    ${date}\n\n`;
         });
 
         await sendMessage(chatId, reportText);
-        } catch (error) {
+    } catch (error) {
         console.error('Error riwayat:', error);
         
         await sendErrorNotification(error, {
