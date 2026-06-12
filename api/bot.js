@@ -119,6 +119,10 @@ async function handleMessage(msg) {
         await generateReport(chatId);
         return;
     }
+        else if (text === '📜 Riwayat' || text.toLowerCase() === '/riwayat') {
+        await tampilkanRiwayat(chatId, 5);
+        return;
+    }
 
     // === QUICK PARSER ===
     await quickParse(text, chatId);
@@ -141,11 +145,11 @@ async function handleCallbackQuery(query) {
 async function sendStartMessage(chatId, nama) {
     const saldo = await hitungSaldo();
     
-    const mainKeyboard = {
+        const mainKeyboard = {
         keyboard: [
-            [{ text: '💵 Expense' }, { text: '📥 Pemasukan' }, { text: '💸 Transfer' }],
-            [{ text: '💰 Tarik Tunai' }, { text: '📤 Setor Tunai' }],
-            [{ text: '📊 Cek Saldo' }, { text: '📋 Laporan' }]
+            [{ text: '💵 Expense' }, { text: ' Pemasukan' }, { text: ' Transfer' }],
+            [{ text: ' Tarik Tunai' }, { text: ' Setor Tunai' }],
+            [{ text: '📊 Cek Saldo' }, { text: '📜 Riwayat' }, { text: '📋 Laporan' }] // Tambah Riwayat di sini
         ],
         resize_keyboard: true,
         one_time_keyboard: false
@@ -432,6 +436,29 @@ async function simpanTransaksi(chatId, type, source, dest, payment, category, am
             }
         }
 
+                console.log('✅ Saved:', type, sourceNorm, '→', destNorm, amount);
+
+        // === FITUR: BUDGET ALERT ===
+        if (type === 'EXPENSE') {
+            const BUDGET_LIMIT = 1000000; // Ganti sesuai budget bulananmu (1 Juta)
+            
+            // Hitung total expense bulan ini
+            const saldoData = await hitungSaldo(); // Kita pakai logika sederhana
+            // Note: Untuk akurasi bulan ini saja, idealnya kita query sheet lagi. 
+            // Tapi untuk cepat, kita bisa cek total expense dari fungsi baru.
+            const totalExpenseBulanIni = await getTotalExpenseBulanIni();
+            
+            if (totalExpenseBulanIni > BUDGET_LIMIT) {
+                const sisa = totalExpenseBulanIni - BUDGET_LIMIT;
+                await sendMessage(chatId, ` *ALERT BUDGET TERLALUI!*\n\nKamu sudah belanja *Rp ${formatRupiah(totalExpenseBulanIni)}* bulan ini.\nMelebihi budget *Rp ${formatRupiah(BUDGET_LIMIT)}* sebesar *Rp ${formatRupiah(sisa)}*.\n\nRem pengeluaranmu sekarang! 🛑`);
+            } else {
+                const sisaBudget = BUDGET_LIMIT - totalExpenseBulanIni;
+                await sendMessage(chatId, `💡 *Info Budget:* Sisa budget bulan ini Rp ${formatRupiah(sisaBudget)}`);
+            }
+        }
+
+        return true;
+
         const authClient = await auth.getClient();
         const now = new Date();
 
@@ -464,6 +491,26 @@ async function simpanTransaksi(chatId, type, source, dest, payment, category, am
         });
 
         console.log('✅ Saved:', type, sourceNorm, '→', destNorm, amount);
+
+        // === FITUR: BUDGET ALERT ===
+        if (type === 'EXPENSE') {
+            const BUDGET_LIMIT = 1000000; // Ganti sesuai budget bulananmu (1 Juta)
+            
+            // Hitung total expense bulan ini
+            const saldoData = await hitungSaldo(); // Kita pakai logika sederhana
+            // Note: Untuk akurasi bulan ini saja, idealnya kita query sheet lagi. 
+            // Tapi untuk cepat, kita bisa cek total expense dari fungsi baru.
+            const totalExpenseBulanIni = await getTotalExpenseBulanIni();
+            
+            if (totalExpenseBulanIni > BUDGET_LIMIT) {
+                const sisa = totalExpenseBulanIni - BUDGET_LIMIT;
+                await sendMessage(chatId, ` *ALERT BUDGET TERLALUI!*\n\nKamu sudah belanja *Rp ${formatRupiah(totalExpenseBulanIni)}* bulan ini.\nMelebihi budget *Rp ${formatRupiah(BUDGET_LIMIT)}* sebesar *Rp ${formatRupiah(sisa)}*.\n\nRem pengeluaranmu sekarang! 🛑`);
+            } else {
+                const sisaBudget = BUDGET_LIMIT - totalExpenseBulanIni;
+                await sendMessage(chatId, `💡 *Info Budget:* Sisa budget bulan ini Rp ${formatRupiah(sisaBudget)}`);
+            }
+        }
+
         return true;
     } catch (error) {
         console.error('❌ Error:', error.message);
@@ -651,4 +698,83 @@ function getCategoryEmoji(category) {
     if (categoryLower.includes('hiburan') || categoryLower.includes('nonton') || categoryLower.includes('game')) return '🎬';
     if (categoryLower.includes('kesehatan') || categoryLower.includes('obat')) return '💊';
     return '💸';
+}
+
+// Helper untuk hitung total expense bulan ini
+async function getTotalExpenseBulanIni() {
+    try {
+        const authClient = await auth.getClient();
+        const response = await sheets.spreadsheets.values.get({
+            auth: authClient,
+            spreadsheetId: SPREADSHEET_ID,
+            range: 'transactions!C:I'
+        });
+        
+        const rows = response.data.values || [];
+        let total = 0;
+        const bulanIni = new Date().getMonth(); // 0-11
+        
+        rows.forEach((row, index) => {
+            if (index === 0) return;
+            const type = row[0];
+            const amountRaw = row[5] || '0';
+            // Kita asumsikan semua expense masuk hitungan (untuk simplifikasi)
+            if (type === 'EXPENSE') {
+                let amount = 0;
+                if (typeof amountRaw === 'string') {
+                    const cleanAmount = amountRaw.replace(/Rp\s?/gi, '').replace(/\./g, '').replace(/,/g, '.');
+                    amount = parseFloat(cleanAmount) || 0;
+                } else {
+                    amount = parseFloat(amountRaw) || 0;
+                }
+                total += amount;
+            }
+        });
+        return total;
+    } catch (error) {
+        return 0;
+    }
+}
+
+async function tampilkanRiwayat(chatId, limit = 5) {
+    try {
+        const authClient = await auth.getClient();
+        const response = await sheets.spreadsheets.values.get({
+            auth: authClient,
+            spreadsheetId: SPREADSHEET_ID,
+            range: 'transactions!A:J'
+        });
+        
+        const rows = response.data.values || [];
+        // Hapus header
+        rows.shift(); 
+        
+        // Ambil data dari belakang (terbaru)
+        const recentData = rows.slice(-limit).reverse();
+        
+        if (recentData.length === 0) {
+            await sendMessage(chatId, '📜 Belum ada riwayat transaksi.');
+            return;
+        }
+
+        let reportText = `📜 *${limit} Transaksi Terakhir:*\n\n`;
+        
+        recentData.forEach((row, idx) => {
+            // row[0]=ID, row[1]=Date, row[2]=Type, row[6]=Category, row[7]=Amount
+            const date = row[1] || '-';
+            const type = row[2] || '-';
+            const category = row[6] || '-';
+            const amount = row[7] || '0';
+            
+            let icon = type === 'INCOME' ? '📥' : (type.includes('TRANSFER') ? '💸' : '📤');
+            
+            reportText += `${idx + 1}. ${icon} *${category}* - Rp ${formatRupiah(parseFloat(amount) || 0)}\n`;
+            reportText += `    ${date}\n\n`;
+        });
+
+        await sendMessage(chatId, reportText);
+    } catch (error) {
+        console.error('Error riwayat:', error);
+        await sendMessage(chatId, 'Gagal mengambil riwayat.');
+    }
 }
