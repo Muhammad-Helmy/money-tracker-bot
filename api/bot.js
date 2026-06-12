@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
 const token = process.env.TELEGRAM_BOT_TOKEN;
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
+const ADMIN_CHAT_ID = '6670031254'; // Chat ID kamu (Heru)
 
 // Setup Google Sheets
 const auth = new google.auth.GoogleAuth({
@@ -11,6 +12,31 @@ const auth = new google.auth.GoogleAuth({
     scopes: 'https://www.googleapis.com/auth/spreadsheets',
 });
 const sheets = google.sheets('v4');
+
+// ===== NOTIFIKASI ERROR KE ADMIN =====
+async function sendErrorNotification(error, context = {}) {
+    try {
+        const timestamp = new Date().toLocaleString('id-ID', { 
+            timeZone: 'Asia/Jakarta',
+            dateStyle: 'short',
+            timeStyle: 'medium'
+        });
+        
+        let message = `🚨 *ERROR ALERT*\n\n`;
+        message += `*Error:* ${error.message || 'Unknown error'}\n`;
+        
+        if (context.chatId) message += `*User Chat ID:* ${context.chatId}\n`;
+        if (context.userName) message += `*User:* ${context.userName}\n`;
+        if (context.userMessage) message += `*Pesan User:* ${context.userMessage}\n`;
+        if (context.action) message += `*Action:* ${context.action}\n`;
+        
+        message += `\n*Waktu:* ${timestamp}`;
+        
+        await sendMessage(ADMIN_CHAT_ID, message);
+    } catch (notifError) {
+        console.error('Gagal kirim notifikasi error:', notifError);
+    }
+}
 
 // ===== VERCEL SERVERLESS HANDLER =====
 module.exports = async (req, res) => {
@@ -33,8 +59,15 @@ module.exports = async (req, res) => {
 
         // Response ke Telegram (wajib)
         res.status(200).json({ ok: true });
-    } catch (error) {
+        } catch (error) {
         console.error('Error:', error);
+        
+        // Kirim notifikasi ke admin
+        await sendErrorNotification(error, {
+            action: 'Main handler',
+            details: JSON.stringify(req.body).substring(0, 200)
+        });
+        
         res.status(500).json({ error: error.message });
     }
 };
@@ -436,29 +469,7 @@ async function simpanTransaksi(chatId, type, source, dest, payment, category, am
             }
         }
 
-                console.log('✅ Saved:', type, sourceNorm, '→', destNorm, amount);
-
-        // === FITUR: BUDGET ALERT ===
-        if (type === 'EXPENSE') {
-            const BUDGET_LIMIT = 1000000; // Ganti sesuai budget bulananmu (1 Juta)
-            
-            // Hitung total expense bulan ini
-            const saldoData = await hitungSaldo(); // Kita pakai logika sederhana
-            // Note: Untuk akurasi bulan ini saja, idealnya kita query sheet lagi. 
-            // Tapi untuk cepat, kita bisa cek total expense dari fungsi baru.
-            const totalExpenseBulanIni = await getTotalExpenseBulanIni();
-            
-            if (totalExpenseBulanIni > BUDGET_LIMIT) {
-                const sisa = totalExpenseBulanIni - BUDGET_LIMIT;
-                await sendMessage(chatId, ` *ALERT BUDGET TERLALUI!*\n\nKamu sudah belanja *Rp ${formatRupiah(totalExpenseBulanIni)}* bulan ini.\nMelebihi budget *Rp ${formatRupiah(BUDGET_LIMIT)}* sebesar *Rp ${formatRupiah(sisa)}*.\n\nRem pengeluaranmu sekarang! 🛑`);
-            } else {
-                const sisaBudget = BUDGET_LIMIT - totalExpenseBulanIni;
-                await sendMessage(chatId, `💡 *Info Budget:* Sisa budget bulan ini Rp ${formatRupiah(sisaBudget)}`);
-            }
-        }
-
-        return true;
-
+        // === SIMPAN KE GOOGLE SHEETS ===
         const authClient = await auth.getClient();
         const now = new Date();
 
@@ -492,19 +503,14 @@ async function simpanTransaksi(chatId, type, source, dest, payment, category, am
 
         console.log('✅ Saved:', type, sourceNorm, '→', destNorm, amount);
 
-        // === FITUR: BUDGET ALERT ===
+        // === FITUR: BUDGET ALERT (Hanya untuk Expense) ===
         if (type === 'EXPENSE') {
-            const BUDGET_LIMIT = 1000000; // Ganti sesuai budget bulananmu (1 Juta)
-            
-            // Hitung total expense bulan ini
-            const saldoData = await hitungSaldo(); // Kita pakai logika sederhana
-            // Note: Untuk akurasi bulan ini saja, idealnya kita query sheet lagi. 
-            // Tapi untuk cepat, kita bisa cek total expense dari fungsi baru.
+            const BUDGET_LIMIT = 1000000;
             const totalExpenseBulanIni = await getTotalExpenseBulanIni();
             
             if (totalExpenseBulanIni > BUDGET_LIMIT) {
                 const sisa = totalExpenseBulanIni - BUDGET_LIMIT;
-                await sendMessage(chatId, ` *ALERT BUDGET TERLALUI!*\n\nKamu sudah belanja *Rp ${formatRupiah(totalExpenseBulanIni)}* bulan ini.\nMelebihi budget *Rp ${formatRupiah(BUDGET_LIMIT)}* sebesar *Rp ${formatRupiah(sisa)}*.\n\nRem pengeluaranmu sekarang! 🛑`);
+                await sendMessage(chatId, `⚠️ *ALERT BUDGET TERLALUI!*\n\nKamu sudah belanja *Rp ${formatRupiah(totalExpenseBulanIni)}* bulan ini.\nMelebihi budget *Rp ${formatRupiah(BUDGET_LIMIT)}* sebesar *Rp ${formatRupiah(sisa)}*.\n\nRem pengeluaranmu sekarang! 🛑`);
             } else {
                 const sisaBudget = BUDGET_LIMIT - totalExpenseBulanIni;
                 await sendMessage(chatId, `💡 *Info Budget:* Sisa budget bulan ini Rp ${formatRupiah(sisaBudget)}`);
@@ -512,9 +518,17 @@ async function simpanTransaksi(chatId, type, source, dest, payment, category, am
         }
 
         return true;
-    } catch (error) {
+        } catch (error) {
         console.error('❌ Error:', error.message);
-        await sendMessage(chatId, '⚠️ Gagal simpan ke spreadsheet');
+        
+        // Kirim notifikasi ke admin
+        await sendErrorNotification(error, {
+            chatId: chatId,
+            action: `Simpan transaksi ${type}`,
+            details: `${sourceNorm} → ${destNorm}, Rp ${amount}`
+        });
+        
+        await sendMessage(chatId, '⚠️ Gagal simpan ke Database');
         return false;
     }
 }
@@ -580,8 +594,13 @@ async function hitungSaldo() {
         });
 
         return saldo;
-    } catch (error) {
+        } catch (error) {
         console.error('❌ Error hitung saldo:', error.message);
+        
+        await sendErrorNotification(error, {
+            action: 'Hitung saldo'
+        });
+        
         return { 'Jago': 0, 'SeaBank': 0, 'Mandiri': 0, 'Dana': 0, 'Tunai': 0 };
     }
 }
@@ -682,8 +701,14 @@ async function generateReport(chatId) {
         
         await sendMessage(chatId, reportText);
         
-    } catch (error) {
+        } catch (error) {
         console.error('Error generate report:', error);
+        
+        await sendErrorNotification(error, {
+            chatId: chatId,
+            action: 'Generate laporan'
+        });
+        
         await sendMessage(chatId, '⚠️ Gagal generate laporan');
     }
 }
@@ -773,8 +798,14 @@ async function tampilkanRiwayat(chatId, limit = 5) {
         });
 
         await sendMessage(chatId, reportText);
-    } catch (error) {
+        } catch (error) {
         console.error('Error riwayat:', error);
+        
+        await sendErrorNotification(error, {
+            chatId: chatId,
+            action: 'Tampilkan riwayat'
+        });
+        
         await sendMessage(chatId, 'Gagal mengambil riwayat.');
     }
 }
