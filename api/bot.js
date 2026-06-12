@@ -266,15 +266,31 @@ async function quickParse(text, chatId) {
             await sendMessage(chatId, `✅ Pemasukan: Rp ${formatRupiah(nominal)}${parsed.notes ? '\n📝 ' + parsed.notes : ''}`);
         }
     }
-    // === EXPENSE ===
+        // === EXPENSE ===
     else if (parsed.type === 'EXPENSE') {
-        const source = parsed.paymentMethod ? normalizeAccountName(parsed.paymentMethod) : 'Jago';
-        const payment = parsed.paymentMethod || 'GoPay';
+        let payment = parsed.paymentMethod || 'GoPay';
+        let source = 'Jago'; // Default source selalu Jago
+        
+        // Mapping payment method ke source account
+        if (payment.toLowerCase() === 'gopay' || payment.toLowerCase() === 'go pay') {
+            source = 'Jago'; // GoPay linked to Jago
+        } else if (payment.toLowerCase() === 'dana') {
+            source = 'Dana';
+        } else if (payment.toLowerCase() === 'cash' || payment.toLowerCase() === 'tunai') {
+            source = 'Tunai';
+            payment = 'Cash';
+        } else if (payment.toLowerCase() === 'seabank' || payment.toLowerCase() === 'sea bank') {
+            source = 'SeaBank';
+        } else if (payment.toLowerCase() === 'mandiri') {
+            source = 'Mandiri';
+        }
+        
         const category = parsed.category || 'Lainnya';
         
         const success = await simpanTransaksi(chatId, 'EXPENSE', source, '', payment, category, nominal, parsed.notes);
         if (success) {
-            await sendMessage(chatId, `✅ Expense: ${category}\nRp ${formatRupiah(nominal)}\nVia: ${payment} (${source})${parsed.notes ? '\n📝 ' + parsed.notes : ''}`);
+            const paymentText = payment === 'GoPay' ? 'GoPay (Jago)' : payment;
+            await sendMessage(chatId, `✅ Expense: ${category}\nRp ${formatRupiah(nominal)}\nVia: ${paymentText}${parsed.notes ? '\n📝 ' + parsed.notes : ''}`);
         }
     }
     else {
@@ -395,15 +411,25 @@ function parseNatural(text) {
             result.destination = normalizedAccounts[0];
         }
     }
-    else {
+        else {
+        // Default: EXPENSE
         result.type = 'EXPENSE';
-        if (normalizedAccounts.includes('Tunai')) {
+        
+        // Deteksi payment method dari teks
+        if (normalizedAccounts.includes('Tunai') || textLower.includes('tunai') || textLower.includes('cash')) {
             result.paymentMethod = 'Cash';
             result.source = 'Tunai';
-        } else if (normalizedAccounts.length >= 1) {
-            result.paymentMethod = normalizedAccounts[0];
-            result.source = normalizedAccounts[0];
+        } else if (normalizedAccounts.includes('Dana') || textLower.includes('dana')) {
+            result.paymentMethod = 'Dana';
+            result.source = 'Dana';
+        } else if (normalizedAccounts.includes('SeaBank') || textLower.includes('seabank') || textLower.includes('sea bank')) {
+            result.paymentMethod = 'SeaBank';
+            result.source = 'SeaBank';
+        } else if (normalizedAccounts.includes('Mandiri')) {
+            result.paymentMethod = 'Mandiri';
+            result.source = 'Mandiri';
         } else {
+            // Default: GoPay (yang linked ke Jago)
             result.paymentMethod = 'GoPay';
             result.source = 'Jago';
         }
